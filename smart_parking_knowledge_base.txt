@@ -1,0 +1,63 @@
+Smart Parking Mobile App - System Verification & Knowledge Base
+System Overview
+The Smart Parking Mobile App allows users to find, book, and pay for parking spots in real-time. The system primarily targets the "Mair Street Parking Lot" and supports multiple payment methods (ABA PayWay, KHQR).
+
+1. Authentication & User Profile
+- Sign Up: Users register with email (gmail.com), password, and full name.
+- OTP Verification: After sign-up, users receive a 6-digit OTP code via email. They must enter this code to verify their account before logging in.
+- Sign In: Users login with email and password.
+- Password Reset: Users can request a password reset via email if they forget their credentials.
+- Profile Management:
+  - Users can view and edit their profile (Name, Phone number, Profile Picture).
+  - Profile images are uploaded via Base64 encoding.
+
+2. Home Screen & Parking Spot Discovery
+- Dashboard: The home screen displays a grid of parking spots (e.g., P-01, P-02).
+- Status Indicators:
+  - Green (Available): Spot is free to book.
+  - Red (Occupied/Reserved): Spot is currently in use or booked.
+- Filtering: Users can filter spots by status (All, Available, Occupied).
+- Search: Users can search for spots by ID (e.g., "P-10") or type.
+
+3. Booking Process
+- Selection: Tapping an available spot opens the Reservation Sheet.
+- Duration: Users select how long they want to park (e.g., 1 hour, 2 hours).
+- Rate: The standard parking rate is $5.00 per hour.
+- Cost Calculation: Total Cost = Duration (hours) × Rate ($5.00).
+- Confirmation: Users confirm details (Spot ID, Start Time, Duration, Total Cost) before proceeding to payment.
+
+4. Payment Integration
+The app supports two primary payment methods:
+- ABA PayWay (Mobile App):
+  - Deep Link: For ABA payments, the app attempts to open the ABA Mobile app directly using a deep link.
+  - Confirmation: After returning from the ABA app, the system automatically checks the transaction status.
+- KHQR (Cambodia QR Standard):
+  - QR Code Generation: The app generates a dynamic KHQR code string based on the booking amount.
+  - Display: A QR code image is displayed on the screen ('PaymentQrScreen').
+  - Currency Support: Supports both USD and KHR (Khmer Riel).
+  - Scanning: Users can save or scan this QR with any KHQR-supported banking app.
+  - Manual Confirmation: After scanning, users click "Done" to confirm the payment.
+
+5. Booking History & Management
+- History List: Users can view their past and current bookings.
+- Infinite Scroll: The list supports pagination (loading 20 items at a time).
+- Filtering: Users can filter history by status (e.g., Completed, Cancelled, Reserved).
+- Details: Each history item shows Spot ID, Date/Time, Duration, and Total Cost.
+
+6. Technical Architecture
+- Mobile App: Native Android (Kotlin) using Jetpack Compose for UI.
+- Networking: Retrofit is used for API calls to the backend (Auth Service, Parking Service, Payment Service).
+- Chatbot: An AI Assistant is integrated into the Home Screen to answer user questions about the system (built with RAG).
+
+7. Common User Questions (FAQ)
+Q: How do I book a spot?
+A: Go to the Home screen, tap on a green (Available) spot, select your duration, and click "Book Now".
+
+Q: What payment methods do you accept?
+A: We accept ABA PayWay (via app) and KHQR scans (ACLEDA, Bakong, etc.).
+
+Q: Can I cancel a booking?
+A: Currently, bookings are confirmed upon payment. Cancellations depend on the specific policy (feature may be limited).
+
+Q: How do I change my profile picture?
+A: Go to the Profile tab, click "Edit Profile", and tap the camera icon to upload a new photo.
