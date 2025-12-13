@@ -1,0 +1,266 @@
+import json
+import os
+
+notebook_content = {
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# Persistent RAG System on Google Colab\n",
+    "\n",
+    "This notebook implements a RAG system that **saves its knowledge base to Google Drive**.\n",
+    "This means you only have to process your PDFs/Text files once. Subsequent runs will load the existing database.\n",
+    "\n",
+    "### **Features:**\n",
+    "1. **Google Drive Integration**: Mounts your drive to save data.\n",
+    "2. **Smart Loading**: Checks if a vector DB exists before creating a new one.\n",
+    "3. **API Server**: Exposes the chat API via ngrok for your Mobile App."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": None,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# --- 1. INSTALL DEPENDENCIES ---\n",
+    "!pip install -q -U requests==2.32.4 \"opentelemetry-sdk<1.39.0\" transformers accelerate bitsandbytes langchain langchain-community sentence-transformers chromadb pypdf unstructured networkx flask flask-cors pyngrok"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": None,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# --- 2. IMPORTS ---\n",
+    "import os\n",
+    "import torch\n",
+    "from google.colab import drive\n",
+    "from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig, pipeline\n",
+    "from langchain.text_splitter import RecursiveCharacterTextSplitter\n",
+    "from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader, TextLoader\n",
+    "from langchain_community.embeddings import HuggingFaceEmbeddings\n",
+    "from langchain_community.vectorstores import Chroma\n",
+    "from langchain_community.llms import HuggingFacePipeline\n",
+    "from langchain.chains import RetrievalQA\n",
+    "from langchain.prompts import PromptTemplate\n",
+    "from flask import Flask, request, jsonify\n",
+    "from flask_cors import CORS\n",
+    "from pyngrok import ngrok\n",
+    "import threading"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": None,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# --- 3. MOUNT DRIVE & CONFIG ---\n",
+    "drive.mount('/content/drive')\n",
+    "\n",
+    "# Paths on Google Drive\n",
+    "DRIVE_ROOT = \"/content/drive/MyDrive/rag_smart_parking\"\n",
+    "DATA_PATH = os.path.join(DRIVE_ROOT, \"documents\")\n",
+    "DB_PATH = os.path.join(DRIVE_ROOT, \"chroma_db\")\n",
+    "\n",
+    "# Ensure directories exist\n",
+    "os.makedirs(DATA_PATH, exist_ok=True)\n",
+    "\n",
+    "print(f\"📂 Working Directory: {DRIVE_ROOT}\")\n",
+    "print(f\"📄 Put your .txt/.pdf files here: {DATA_PATH}\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": None,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# --- 4. INITIALIZE EMBEDDINGS ---\n",
+    "EMBEDDING_MODEL_NAME = \"sentence-transformers/all-MiniLM-L6-v2\"\n",
+    "print(\"Loading Embedding Model...\")\n",
+    "embeddings = HuggingFaceEmbeddings(\n",
+    "    model_name=EMBEDDING_MODEL_NAME,\n",
+    "    model_kwargs={'device': 'cpu'}\n",
+    ")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": None,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# --- 5. LOAD OR CREATE DATABASE ---\n",
+    "# Check if DB exists by looking for files in the DB_PATH\n",
+    "db_exists = os.path.exists(DB_PATH) and os.listdir(DB_PATH)\n",
+    "\n",
+    "if db_exists:\n",
+    "    print(\"✅ Found existing Vector Database on Drive. Loading...\")\n",
+    "    vector_store = Chroma(persist_directory=DB_PATH, embedding_function=embeddings)\n",
+    "    print(\"Database Loaded!\")\n",
+    "else:\n",
+    "    print(\"⚠️ No existing database found. Processing new data...\")\n",
+    "    \n",
+    "    # Check for documents\n",
+    "    if not any(fname.endswith(('.txt', '.pdf')) for fname in os.listdir(DATA_PATH)):\n",
+    "        print(\"Creating demo file since folder is empty...\")\n",
+    "        with open(os.path.join(DATA_PATH, \"demo_info.txt\"), \"w\") as f:\n",
+    "            f.write(\"Smart Parking System Knowledge Base. Users can book spots via the app. Payment is handled via ABA PayWay.\")\n",
+    "    \n",
+    "    # Load Docs\n",
+    "    documents = []\n",
+    "    documents.extend(DirectoryLoader(DATA_PATH, glob=\"**/*.txt\", loader_cls=TextLoader).load())\n",
+    "    try:\n",
+    "        documents.extend(DirectoryLoader(DATA_PATH, glob=\"**/*.pdf\", loader_cls=PyPDFLoader).load())\n",
+    "    except: pass\n",
+    "    \n",
+    "    print(f\"Loaded {len(documents)} documents.\")\n",
+    "    \n",
+    "    # Split\n",
+    "    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)\n",
+    "    chunks = text_splitter.split_documents(documents)\n",
+    "    \n",
+    "    # Create DB\n",
+    "    print(f\"Creating Embeddings for {len(chunks)} chunks...\")\n",
+    "    vector_store = Chroma.from_documents(\n",
+    "        documents=chunks,\n",
+    "        embedding=embeddings,\n",
+    "        persist_directory=DB_PATH\n",
+    "    )\n",
+    "    print(\"✅ Database Created and Saved to Drive!\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": None,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# --- 6. LOAD LLM (Mistral/Zephyr) ---\n",
+    "MODEL_NAME = \"HuggingFaceH4/zephyr-7b-beta\"\n",
+    "\n",
+    "bnb_config = BitsAndBytesConfig(\n",
+    "    load_in_4bit=True,\n",
+    "    bnb_4bit_use_double_quant=True,\n",
+    "    bnb_4bit_quant_type=\"nf4\",\n",
+    "    bnb_4bit_compute_dtype=torch.bfloat16\n",
+    ")\n",
+    "\n",
+    "# Path for Model Cache\n",
+    "MODEL_CACHE_PATH = os.path.join(DRIVE_ROOT, \"models\")\n",
+    "os.makedirs(MODEL_CACHE_PATH, exist_ok=True)\n",
+    "\n",
+    "print(f\"Loading {MODEL_NAME}...\")\n",
+    "print(f\"(First run will download to {MODEL_CACHE_PATH}, subsequent runs will be fast)\")\n",
+    "tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, cache_dir=MODEL_CACHE_PATH)\n",
+    "model = AutoModelForCausalLM.from_pretrained(\n",
+    "    MODEL_NAME,\n",
+    "    quantization_config=bnb_config,\n",
+    "    device_map=\"auto\",\n",
+    "    cache_dir=MODEL_CACHE_PATH\n",
+    ")\n",
+    "\n",
+    "text_generation_pipeline = pipeline(\n",
+    "    model=model,\n",
+    "    tokenizer=tokenizer,\n",
+    "    task=\"text-generation\",\n",
+    "    temperature=0.2,\n",
+    "    do_sample=True,\n",
+    "    repetition_penalty=1.1,\n",
+    "    return_full_text=False,\n",
+    "    max_new_tokens=400,\n",
+    ")\n",
+    "\n",
+    "llm = HuggingFacePipeline(pipeline=text_generation_pipeline)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": None,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# --- 7. SETUP RETRIEVAL CHAIN ---\n",
+    "retriever = vector_store.as_retriever(search_kwargs={\"k\": 3})\n",
+    "\n",
+    "prompt_template = \"\"\"\n",
+    "<|system|>\n",
+    "You are a helpful AI assistant for the Smart Parking App. Answer strictly based on the context provided.\n",
+    "Context: {context}</s>\n",
+    "<|user|>\n",
+    "{question}</s>\n",
+    "<|assistant|>\n",
+    "\"\"\"\n",
+    "\n",
+    "PROMPT = PromptTemplate(\n",
+    "    template=prompt_template,\n",
+    "    input_variables=[\"context\", \"question\"]\n",
+    ")\n",
+    "\n",
+    "qa_chain = RetrievalQA.from_chain_type(\n",
+    "    llm=llm,\n",
+    "    chain_type=\"stuff\",\n",
+    "    retriever=retriever,\n",
+    "    return_source_documents=True,\n",
+    "    chain_type_kwargs={\"prompt\": PROMPT}\n",
+    ")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": None,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# --- 8. START API SERVER ---\n",
+    "app = Flask(__name__)\n",
+    "CORS(app)\n",
+    "\n",
+    "@app.route('/api/chat', methods=['POST'])\n",
+    "def chat_endpoint():\n",
+    "    data = request.json\n",
+    "    query = data.get('query', '')\n",
+    "    if not query: return jsonify({\"error\": \"No query\"}), 400\n",
+    "    \n",
+    "    try:\n",
+    "        result = qa_chain.invoke({\"query\": query})\n",
+    "        return jsonify({\"answer\": result['result']})\n",
+    "    except Exception as e:\n",
+    "        return jsonify({\"error\": str(e)}), 500\n",
+    "\n",
+    "# !ngrok config add-authtoken <YOUR_TOKEN_HERE>\n",
+    "public_url = ngrok.connect(5000).public_url\n",
+    "print(f\"\\n\\n🌟 YOUR PUBLIC URL: {public_url} 🌟\\n\\n\")\n",
+    "app.run(port=5000)"
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.10.12"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
+
+with open("rag_persistent_demo.ipynb", "w") as f:
+    json.dump(notebook_content, f, indent=1)
