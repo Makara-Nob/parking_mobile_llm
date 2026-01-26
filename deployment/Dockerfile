@@ -1,20 +1,14 @@
-# Use NVIDIA CUDA base image
-FROM nvidia/cuda:12.1.0-runtime-ubuntu22.04
+# Use lightweight Python base image (CPU only is fine for API mode)
+FROM python:3.10-slim
 
 # Set Env
-ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 
-# Install Python and system dependencies
+# Install system dependencies (needed for chromadb/building)
 RUN apt-get update && apt-get install -y \
-    python3.10 \
-    python3-pip \
+    build-essential \
     git \
-    wget \
     && rm -rf /var/lib/apt/lists/*
-
-# Alias python to python3
-RUN ln -s /usr/bin/python3.10 /usr/bin/python
 
 # Working Directory
 WORKDIR /app
