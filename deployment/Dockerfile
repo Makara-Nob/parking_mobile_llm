@@ -25,7 +25,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy App Code
 COPY app.py .
-COPY deployment/start.sh .
+COPY start.sh .
 
 # Make start script executable
 RUN chmod +x start.sh
