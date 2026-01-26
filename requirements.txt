@@ -1,0 +1,16 @@
+torch
+transformers
+accelerate
+bitsandbytes
+langchain
+langchain-community
+langchain-huggingface
+sentence-transformers
+chromadb
+pypdf
+unstructured
+networkx
+fastapi
+uvicorn
+python-multipart
+requests
