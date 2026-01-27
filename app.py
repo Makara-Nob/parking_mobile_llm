@@ -8,17 +8,18 @@ from typing import List
 
 # LangChain & Transformers
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings, HuggingFaceEndpoint
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_huggingface import HuggingFaceEmbeddings, HuggingFaceEndpoint, ChatHuggingFace
 from langchain_community.vectorstores import Chroma
 from langchain_huggingface import HuggingFacePipeline
-from langchain.chains import RetrievalQA
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate, ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig, pipeline
 
 # --- CONFIGURATION ---
-HF_TOKEN = os.getenv("HF_TOKEN") # Get token from environment
-MODEL_NAME = "HuggingFaceH4/zephyr-7b-beta"
+HF_TOKEN = os.getenv("HF_TOKEN")
+MODEL_NAME = "meta-llama/Llama-3.2-3B-Instruct"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 PERSIST_DIRECTORY = "chroma_db"
 DATA_DIRECTORY = "data"
@@ -28,43 +29,63 @@ os.makedirs(PERSIST_DIRECTORY, exist_ok=True)
 app = FastAPI(title="Parking LLM Microservice")
 
 # --- GLOBAL VARIABLES ---
-qa_chain = None
+rag_chain = None
 vector_store = None
+retriever = None
+
+def format_docs(docs):
+    context = "\n\n".join(doc.page_content for doc in docs)
+    print(f"\n--- DEBUG: Retrieved Context (len {len(docs)}) ---\n{context}\n----------------------------------\n")
+    return context
 
 # --- INITIALIZATION ---
 def init_model():
-    global qa_chain, vector_store
+    global rag_chain, vector_store, retriever
     
-    # 1. Embeddings
     print("Loading Embeddings...")
     embeddings = HuggingFaceEmbeddings(
         model_name=EMBEDDING_MODEL,
         model_kwargs={'device': 'cuda' if torch.cuda.is_available() else 'cpu'}
     )
 
-    # 2. Vector DB
     print("Loading Vector DB...")
     vector_store = Chroma(
         persist_directory=PERSIST_DIRECTORY,
         embedding_function=embeddings
     )
+    
+    # --- AUTO-INDEXING ---
+    current_data = vector_store.get()
+    if not current_data or not current_data['ids']:
+        print("Empty Vector DB detected. Indexing default knowledge base...")
+        kb_path = os.path.join(DATA_DIRECTORY, "smart_parking_knowledge_base.txt")
+        if os.path.exists(kb_path):
+            loader = TextLoader(kb_path)
+            docs = loader.load()
+            splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+            chunks = splitter.split_documents(docs)
+            vector_store.add_documents(chunks)
+            print(f"Indexed {len(chunks)} chunks from {kb_path}")
+        else:
+            print(f"WARNING: Knowledge base not found at {kb_path}")
 
-    # 3. LLM (API vs Local)
+    retriever = vector_store.as_retriever(search_kwargs={"k": 5})
+
     if HF_TOKEN:
-        print("🌍 Using Hugging Face Serverless API (Free Tier Mode)")
-        llm = HuggingFaceEndpoint(
+        print("Using Hugging Face Serverless API (Chat Mode)")
+        llm_base = HuggingFaceEndpoint(
             repo_id=MODEL_NAME,
             task="text-generation",
-            max_new_tokens=512,
-            top_k=50,
-            temperature=0.1,
-            repetition_penalty=1.1,
-            huggingfacehub_api_token=HF_TOKEN
+            max_new_tokens=128,
+            huggingfacehub_api_token=HF_TOKEN,
+            temperature=0.01,
+            stop_sequences=["\n\n", "Question:", "Q:", "Context:"]
         )
+        llm = ChatHuggingFace(llm=llm_base)
     else:
-        print(f"🖥️ Using Local GPU Mode: {MODEL_NAME}...")
+        print(f"Using Local Mode: {MODEL_NAME}...")
         if not torch.cuda.is_available():
-            print("⚠️ WARNING: No GPU detected! This will be very slow.")
+            print("WARNING: No GPU detected!")
             
         bnb_config = BitsAndBytesConfig(
             load_in_4bit=True,
@@ -89,31 +110,32 @@ def init_model():
             repetition_penalty=1.1,
             return_full_text=False,
             max_new_tokens=256,
+            stop_sequence="\n\n"
         )
 
         llm = HuggingFacePipeline(pipeline=text_generation_pipeline)
 
-    # 4. Chain
-    prompt_template = """
-    <|system|>
-    You are a helpful AI assistant for the Smart Parking App. Answer strictly based on the context provided.
-    Context: {context}</s>
-    <|user|>
-    {question}</s>
-    <|assistant|>
-    """
-    
-    PROMPT = PromptTemplate(
-        template=prompt_template,
-        input_variables=["context", "question"]
+    # 4. RAG Chain using ChatPromptTemplate
+    system_rules = (
+        "You are the official assistant for the Smart Parking Mobile App. "
+        "Your only job is to provide factual answers based ONLY on the provided context.\n\n"
+        "STRICT CONSTRAINTS:\n"
+        "- Do NOT infer information. If the exact term or topic (e.g., 'refund') is not mentioned, you MUST refuse.\n"
+        "- If information is missing, say EXACTLY: 'I don’t have that information.'\n"
+        "- Do NOT apologize. Do NOT add prefixes like 'A:' or 'Answer:'.\n"
+        "- Output the answer directly and nothing else."
     )
 
-    qa_chain = RetrievalQA.from_chain_type(
-        llm=llm,
-        chain_type="stuff",
-        retriever=vector_store.as_retriever(search_kwargs={"k": 3}),
-        return_source_documents=True,
-        chain_type_kwargs={"prompt": PROMPT}
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system_rules),
+        ("user", "CONTEXT:\n{context}\n\nQUESTION: {question}\n\n(Follow STRICT CONSTRAINTS. No inference. If missing, say 'I don’t have that information.')")
+    ])
+
+    rag_chain = (
+        {"context": retriever | format_docs, "question": RunnablePassthrough()}
+        | prompt
+        | llm
+        | StrOutputParser()
     )
     print("✅ System Ready!")
 
@@ -123,7 +145,6 @@ class QueryRequest(BaseModel):
 
 class QueryResponse(BaseModel):
     answer: str
-    sources: List[str]
 
 # --- ENDPOINTS ---
 @app.on_event("startup")
@@ -132,39 +153,49 @@ async def startup_event():
 
 @app.post("/chat", response_model=QueryResponse)
 async def chat(request: QueryRequest):
-    if not qa_chain:
+    if not rag_chain:
         raise HTTPException(503, "Model not loaded yet")
     
     try:
-        result = qa_chain.invoke({"query": request.query})
-        sources = [doc.metadata.get("source", "unknown") for doc in result.get("source_documents", [])]
-        return {"answer": result["result"], "sources": sources}
+        # result = rag_chain.invoke(request.query)
+        # Using a simplified invoke for standard LCEL chains
+        answer = rag_chain.invoke(request.query)
+        return {"answer": answer}
     except Exception as e:
+        print(f"Error in chat: {e}")
         raise HTTPException(500, str(e))
 
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
-    global qa_chain, vector_store
+    global vector_store
+    
+    # Ensure data directory exists
+    os.makedirs(DATA_DIRECTORY, exist_ok=True)
     
     file_path = os.path.join(DATA_DIRECTORY, file.filename)
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     
-    # Process File
-    if file.filename.endswith(".pdf"):
-        loader = PyPDFLoader(file_path)
-    else:
-        loader = TextLoader(file_path)
-    
-    docs = loader.load()
-    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-    chunks = splitter.split_documents(docs)
-    
-    # Add to DB
-    vector_store.add_documents(chunks)
-    vector_store.persist()
-    
-    return {"message": f"Successfully processed {file.filename} and added to Knowledge Base"}
+    try:
+        # Process File
+        if file.filename.endswith(".pdf"):
+            loader = PyPDFLoader(file_path)
+        else:
+            loader = TextLoader(file_path)
+        
+        docs = loader.load()
+        splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+        chunks = splitter.split_documents(docs)
+        
+        # Add to DB
+        vector_store.add_documents(chunks)
+        vector_store.persist()
+        
+        return {"message": f"Successfully processed {file.filename} and added to Knowledge Base"}
+    except Exception as e:
+        print(f"Error in upload: {e}")
+        raise HTTPException(500, f"Failed to process file: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
