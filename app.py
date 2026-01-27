@@ -83,37 +83,7 @@ def init_model():
         )
         llm = ChatHuggingFace(llm=llm_base)
     else:
-        print(f"Using Local Mode: {MODEL_NAME}...")
-        if not torch.cuda.is_available():
-            print("WARNING: No GPU detected!")
-            
-        bnb_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_use_double_quant=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.bfloat16
-        )
-
-        tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-        model = AutoModelForCausalLM.from_pretrained(
-            MODEL_NAME,
-            quantization_config=bnb_config,
-            device_map="auto"
-        )
-
-        text_generation_pipeline = pipeline(
-            model=model,
-            tokenizer=tokenizer,
-            task="text-generation",
-            temperature=0.2,
-            do_sample=True,
-            repetition_penalty=1.1,
-            return_full_text=False,
-            max_new_tokens=256,
-            stop_sequence="\n\n"
-        )
-
-        llm = HuggingFacePipeline(pipeline=text_generation_pipeline)
+        raise Exception("CRITICAL ERROR: HF_TOKEN environment variable is missing. Please add it to Space Secrets.")
 
     # 4. RAG Chain using ChatPromptTemplate
     system_rules = (
@@ -137,7 +107,7 @@ def init_model():
         | llm
         | StrOutputParser()
     )
-    print("✅ System Ready!")
+    print("System Ready!")
 
 # --- API MODELS ---
 class QueryRequest(BaseModel):

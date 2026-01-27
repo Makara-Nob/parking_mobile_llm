@@ -26,7 +26,7 @@ COPY data/ data/
 RUN chmod +x start.sh
 
 # Expose Port
-EXPOSE 8000
+EXPOSE 7860
 
 # Start
 CMD ["./start.sh"]
