@@ -76,7 +76,7 @@ def init_model():
         llm_base = HuggingFaceEndpoint(
             repo_id=MODEL_NAME,
             task="text-generation",
-            max_new_tokens=128,
+            max_new_tokens=256,
             huggingfacehub_api_token=HF_TOKEN,
             temperature=0.01,
             stop_sequences=["\n\n", "Question:", "Q:", "Context:"]
@@ -88,12 +88,13 @@ def init_model():
     # 4. RAG Chain using ChatPromptTemplate
     system_rules = (
         "You are the official assistant for the Smart Parking Mobile App. "
-        "Your only job is to provide factual answers based ONLY on the provided context.\n\n"
+        "Your only job is to provide factual and complete answers based ONLY on the provided context.\n\n"
         "STRICT CONSTRAINTS:\n"
-        "- Do NOT infer information. If the exact term or topic (e.g., 'refund') is not mentioned, you MUST refuse.\n"
+        "- Provide a full and detailed answer if the information is available in the context.\n"
+        "- Do NOT infer information. If the topic is not mentioned, you MUST refuse.\n"
         "- If information is missing, say EXACTLY: 'I don’t have that information.'\n"
         "- Do NOT apologize. Do NOT add prefixes like 'A:' or 'Answer:'.\n"
-        "- Output the answer directly and nothing else."
+        "- Output the answer directly and concisely, but ensure all relevant details from the context are included."
     )
 
     prompt = ChatPromptTemplate.from_messages([
