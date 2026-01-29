@@ -126,16 +126,23 @@ async def chat(request: QueryRequest):
     if not rag_chain:
         raise HTTPException(503, "Model not loaded yet")
     
-    query = request.query.strip().lower()
-    greetings = ["hi", "hello", "hey", "greeting", "hello there", "halo"]
+    raw_query = request.query
+    query = raw_query.strip().lower()
     
-    if not query or query in greetings:
-        return {"answer": "Hello! I am the Smart Parking Assistant. How can I help you today?"}
+    # Remove basic punctuation for greeting check
+    clean_query = "".join(c for c in query if c.isalnum() or c.isspace()).strip()
+    greetings = {"hi", "hello", "hey", "greeting", "hello there", "halo", "morning", "afternoon", "evening"}
+    
+    print(f"\n--- DEBUG: Received Query: '{raw_query}' (clean: '{clean_query}') ---")
+    
+    if not clean_query or clean_query in greetings:
+        response = "Hello! I am the Smart Parking Assistant. How can I help you today?"
+        print(f"--- DEBUG: Returning Greeting Response ---")
+        return {"answer": response}
         
     try:
-        # result = rag_chain.invoke(request.query)
-        # Using a simplified invoke for standard LCEL chains
-        answer = rag_chain.invoke(request.query)
+        print(f"--- DEBUG: Invoking RAG Chain ---")
+        answer = rag_chain.invoke(raw_query)
         return {"answer": answer}
     except Exception as e:
         print(f"Error in chat: {e}")
