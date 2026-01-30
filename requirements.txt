@@ -5,6 +5,7 @@ bitsandbytes
 langchain
 langchain-huggingface
 langchain-community
+langchain-upstash
 upstash-vector
 fastapi
 uvicorn

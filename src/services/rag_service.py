@@ -1,7 +1,7 @@
 import os
 import torch
 from langchain_huggingface import HuggingFaceEmbeddings, HuggingFaceEndpoint, ChatHuggingFace
-from langchain_community.vectorstores.upstash_vector import UpstashVectorStore
+from langchain_upstash import UpstashVectorStore
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import TextLoader
 from langchain_core.prompts import ChatPromptTemplate
@@ -66,9 +66,19 @@ class RAGService:
         return context
 
     def _auto_index(self):
-        current_data = self.vector_store.get()
-        if not current_data or not current_data['ids']:
-            print("Empty Vector DB detected. Indexing default knowledge base...")
+        # Check if index is empty. Upstash doesn't have a direct .get() for all IDs easily.
+        # We can use the .info() method if available, or just a simple similarity search check.
+        try:
+            # Try to get index info to check vector count
+            info = self.vector_store.index.info()
+            vector_count = info.vector_count
+        except:
+            # Fallback: search for something generic
+            results = self.vector_store.similarity_search("the", k=1)
+            vector_count = len(results)
+
+        if vector_count == 0:
+            print("Empty Upstash Vector DB detected. Indexing default knowledge base...")
             kb_path = os.path.join(DATA_DIRECTORY, "smart_parking_knowledge_base.txt")
             if os.path.exists(kb_path):
                 loader = TextLoader(kb_path)
