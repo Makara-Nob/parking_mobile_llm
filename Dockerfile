@@ -18,7 +18,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy App Code
-COPY app.py .
+COPY src/ src/
 COPY start.sh .
 COPY data/ data/
 
