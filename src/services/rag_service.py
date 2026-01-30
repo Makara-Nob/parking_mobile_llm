@@ -1,7 +1,7 @@
 import os
 import torch
 from langchain_huggingface import HuggingFaceEmbeddings, HuggingFaceEndpoint, ChatHuggingFace
-from langchain_upstash import UpstashVectorStore
+from langchain_community.vectorstores import UpstashVectorStore
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import TextLoader
 from langchain_core.prompts import ChatPromptTemplate
