@@ -1,6 +1,7 @@
 import os
 import torch
 from langchain_huggingface import HuggingFaceEmbeddings, HuggingFaceEndpoint, ChatHuggingFace
+from upstash_vector import Index
 from langchain_community.vectorstores import UpstashVectorStore
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import TextLoader
@@ -25,9 +26,9 @@ class RAGService:
         )
 
         print("Connecting to Upstash Vector DB...")
+        index = Index(url=UPSTASH_VECTOR_REST_URL, token=UPSTASH_VECTOR_REST_TOKEN)
         self.vector_store = UpstashVectorStore(
-            url=UPSTASH_VECTOR_REST_URL,
-            token=UPSTASH_VECTOR_REST_TOKEN,
+            index=index,
             embedding=self.embeddings
         )
         
