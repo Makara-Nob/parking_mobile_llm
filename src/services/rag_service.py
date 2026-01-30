@@ -1,13 +1,13 @@
 import os
 import torch
 from langchain_huggingface import HuggingFaceEmbeddings, HuggingFaceEndpoint, ChatHuggingFace
-from langchain_community.vectorstores import Chroma
+from langchain_community.vectorstores.upstash_vector import UpstashVectorStore
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import TextLoader
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
-from src.core.config import HF_TOKEN, MODEL_NAME, EMBEDDING_MODEL, PERSIST_DIRECTORY, DATA_DIRECTORY
+from src.core.config import HF_TOKEN, MODEL_NAME, EMBEDDING_MODEL, DATA_DIRECTORY, UPSTASH_VECTOR_REST_URL, UPSTASH_VECTOR_REST_TOKEN
 from src.core.constants import SYSTEM_RULES, USER_PROMPT_TEMPLATE
 
 class RAGService:
@@ -24,10 +24,11 @@ class RAGService:
             model_kwargs={'device': 'cuda' if torch.cuda.is_available() else 'cpu'}
         )
 
-        print("Loading Vector DB...")
-        self.vector_store = Chroma(
-            persist_directory=PERSIST_DIRECTORY,
-            embedding_function=self.embeddings
+        print("Connecting to Upstash Vector DB...")
+        self.vector_store = UpstashVectorStore(
+            url=UPSTASH_VECTOR_REST_URL,
+            token=UPSTASH_VECTOR_REST_TOKEN,
+            embedding=self.embeddings
         )
         
         self._auto_index()
@@ -84,4 +85,9 @@ class RAGService:
 
     def add_document(self, chunks):
         self.vector_store.add_documents(chunks)
-        self.vector_store.persist()
+
+    def get_indexed_sources(self):
+        # Upstash integration doesn't support a simple .get() in the same way Chroma does
+        # for listing all metadata easily. For now, we'll keep it as a placeholder
+        # or research Upstash specific listing if necessary.
+        return ["Source listing not supported on Upstash yet"]
