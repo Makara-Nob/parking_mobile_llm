@@ -9,20 +9,33 @@ pinned: false
 
 # RAG System with Free Hugging Face Models
 
-This folder contains a Jupyter Notebook (`rag_pipeline_demo.ipynb`) designed to be run in Google Colab. It sets up a complete Retrieval-Augmented Generation (RAG) system using free, open-source models.
+This folder contains a Jupyter Notebook (`rag_pipeline_demo.ipynb`) designed to be run in Google Colab. It sets up a complete Retrieval-Augmented Generation (RAG) system using free,## 📁 Project Structure
 
-## 1. Data Preparation (Instructions)
+```text
+parking-llm/
+├── src/
+│   ├── api/          # API Route definitions
+│   ├── core/         # Config and Constants
+│   ├── models/        # Pydantic Schemas
+│   ├── services/      # Business Logic (RAG Service)
+│   └── main.py       # Application Entry Point
+├── data/             # Knowledge Base files (.txt, .pdf)
+├── chroma_db/        # Persisted vector database
+├── Dockerfile        # Container configuration
+└── ARCHITECTURE.md    # Detailed Architecture & Tech Stack
+```
 
-The pipeline is designed to ingest **unstructured data** and convert it into a structured vector database.
+## 🚀 Getting Started
 
-### Supported Formats
-The example code supports:
-- `.txt` (Text files)
-- `.pdf` (PDF documents)
+### Prerequisites
+- Python 3.9+
+- Hugging Face Token (HF_TOKEN)
 
-### How to Structure Your Data
-1. Create a folder named `data` in the Colab environment (or upload your files there).
-2. Clean your text files:
+### Installation
+1. Clone the repository
+2. Install dependencies: `pip install -r requirements.txt`
+3. Set environment variable: `export HF_TOKEN=your_token_here`
+4. Run the application: `python -m src.main`
    - Remove excessive headers/footers if possible.
    - Ensure encoding is UTF-8.
    - For PDFs, ensure they are text-searchable (not just scanned images), or the loader will need OCR (which is slower and requires extra dependencies like `tesseract`).
